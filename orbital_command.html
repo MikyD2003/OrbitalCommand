@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ORBITAL COMMAND // Space Domain Awareness</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.1.4/satellite.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+        :root {
+            --neon-cyan: #00f0ff;
+            --neon-amber: #ffaa00;
+            --neon-red: #ff0040;
+            --neon-green: #00ff41;
+            --deep-space: #020204;
+            --panel-bg: rgba(5, 10, 20, 0.92);
+        }
+
+        body {
+            background: var(--deep-space);
+            color: #e0e0e0;
+            font-family: 'Share Tech Mono', monospace;
+            overflow: hidden;
+        }
+
+        #map {
+            height: 100vh;
+            width: 100vw;
+            background: radial-gradient(ellipse at center, #0a0e1f 0%, #000000 100%);
+            z-index: 1;
+        }
+
+        /* CRT Scanline Effect */
+        .crt::before {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 2;
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: #000; }
+        ::-webkit-scrollbar-thumb { background: var(--neon-cyan); }
+
+        .glass-panel {
+            background: var(--panel-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(0, 240, 255, 0.15);
+            box-shadow: 0 0 40px rgba(0, 240, 255, 0.1), inset 0 0 20px rgba(0, 0, 0, 0.8);
+        }
+
+        .orbitron { font-family: 'Orbitron', sans-serif; }
+        .tech-mono { font-family: 'Share Tech Mono', monospace; }
+
+        /* Glowing Text */
+        .glow-cyan { text-shadow: 0 0 10px var(--neon-cyan), 0 0 20px var(--neon-cyan); }
+        .glow-amber { text-shadow: 0 0 10px var(--neon-amber); }
+        .glow-red { text-shadow: 0 0 10px var(--neon-red); }
+
+        /* Satellite Markers */
+        .marker-station { filter: drop-shadow(0 0 8px var(--neon-cyan)); }
+        .marker-starlink { filter: drop-shadow(0 0 6px rgba(0, 240, 255, 0.6)); }
+        .marker-debris { filter: drop-shadow(0 0 6px var(--neon-red)); }
+        .marker-gps { filter: drop-shadow(0 0 8px var(--neon-green)); }
+
+        /* Pulsing Animation */
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.8; }
+            100% { transform: scale(2.5); opacity: 0; }
+        }
+        .pulse-ring {
+            position: absolute;
+            border-radius: 50%;
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+
+        /* Orbit Lines */
+        .orbit-track {
+            stroke-dasharray: 2, 8;
+            animation: orbit-flow 20s linear infinite;
+            opacity: 0.4;
+        }
+        @keyframes orbit-flow {
+            to { stroke-dashoffset: -100; }
+        }
+
+        /* Data Loading Animation */
+        .loading-bar {
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--neon-cyan), transparent);
+            animation: loading 2s infinite;
+        }
+        @keyframes loading {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        /* Range Rings */
+        .range-ring {
+            fill: none;
+            stroke: rgba(0, 240, 255, 0.1);
+            stroke-width: 1;
+        }
+
+        /* Status Indicators */
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+        .status-active { background: var(--neon-green); box-shadow: 0 0 8px var(--neon-green); }
+        .status-warning { background: var(--neon-amber); box-shadow: 0 0 8px var(--neon-amber); }
+        .status-critical { background: var(--neon-red); box-shadow: 0 0 8px var(--neon-red); }
+
+        /* Grid Overlay */
+        .grid-overlay {
+            background-image: 
+                linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="crt">
+    <!-- Grid Overlay -->
+    <div class="fixed inset-0 grid-overlay z-0"></div>
+
+    <!-- Header -->
+    <div class="fixed top-0 left-0 right-0 z-50 glass-panel border-b border-cyan-900/30">
+        <div class="flex justify-between items-center px-6 py-3">
+            <div class="flex items-center gap-4">
+                <div class="relative">
+                    <i class="fas fa-satellite text-cyan-400 text-2xl animate-pulse"></i>
+                    <div class="absolute inset-0 bg-cyan-400 blur-lg opacity-50"></div>
+                </div>
+                <div>
+                    <h1 class="text-2xl orbitron font-bold tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500 glow-cyan">
+                        ORBITAL COMMAND
+                    </h1>
+                    <p class="text-xs text-cyan-600 tech-mono tracking-[0.3em]">SPACE DOMAIN AWARENESS NETWORK</p>
+                </div>
+            </div>
+
+            <div class="flex gap-8 text-sm tech-mono">
+                <div class="text-right">
+                    <div class="text-gray-500 text-xs">TLE EPOCH</div>
+                    <div class="text-cyan-400" id="tle-epoch">--</div>
+                </div>
+                <div class="text-right">
+                    <div class="text-gray-500 text-xs">TRACKED OBJECTS</div>
+                    <div class="text-green-400 text-xl font-bold glow-cyan" id="object-count">0</div>
+                </div>
+                <div class="text-right">
+                    <div class="text-gray-500 text-xs">SYSTEM TIME</div>
+                    <div class="text-cyan-400" id="clock">00:00:00Z</div>
+                </div>
+            </div>
+        </div>
+        <div class="loading-bar" id="data-loader"></div>
+    </div>
+
+    <!-- Left Sidebar - Controls -->
+    <div class="fixed left-4 top-24 z-40 w-80 glass-panel rounded-lg overflow-hidden">
+        <div class="p-4 border-b border-cyan-900/30">
+            <h3 class="orbitron text-cyan-400 text-sm tracking-wider">
+                <i class="fas fa-layer-group mr-2"></i>OBJECT CATEGORIES
+            </h3>
+        </div>
+
+        <div class="p-4 space-y-3 max-h-[40vh] overflow-y-auto">
+            <!-- Stations -->
+            <label class="flex items-center justify-between cursor-pointer group hover:bg-cyan-900/10 p-2 rounded transition">
+                <div class="flex items-center gap-3">
+                    <span class="status-dot status-active"></span>
+                    <div>
+                        <div class="text-cyan-400 text-sm font-bold">SPACE STATIONS</div>
+                        <div class="text-xs text-gray-500">ISS, Tiangong</div>
+                    </div>
+                </div>
+                <input type="checkbox" checked id="cat-stations" class="w-4 h-4 accent-cyan-500">
+            </label>
+
+            <!-- Starlink -->
+            <label class="flex items-center justify-between cursor-pointer group hover:bg-cyan-900/10 p-2 rounded transition">
+                <div class="flex items-center gap-3">
+                    <span class="status-dot" style="background: #00f0ff; box-shadow: 0 0 8px #00f0ff;"></span>
+                    <div>
+                        <div class="text-cyan-300 text-sm font-bold">STARLINK</div>
+                        <div class="text-xs text-gray-500">LEO Constellation</div>
+                    </div>
+                </div>
+                <input type="checkbox" checked id="cat-starlink" class="w-4 h-4 accent-cyan-400">
+            </label>
+
+            <!-- GPS -->
+            <label class="flex items-center justify-between cursor-pointer group hover:bg-green-900/10 p-2 rounded transition">
+                <div class="flex items-center gap-3">
+                    <span class="status-dot status-active" style="background: #00ff41;"></span>
+                    <div>
+                        <div class="text-green-400 text-sm font-bold">GPS CONSTELLATION</div>
+                        <div class="text-xs text-gray-500">Navstars, Galileo</div>
+                    </div>
+                </div>
+                <input type="checkbox" checked id="cat-gps" class="w-4 h-4 accent-green-500">
+            </label>
+
+            <!-- Weather -->
+            <label class="flex items-center justify-between cursor-pointer group hover:bg-blue-900/10 p-2 rounded transition">
+                <div class="flex items-center gap-3">
+                    <span class="status-dot" style="background: #4488ff; box-shadow: 0 0 8px #4488ff;"></span>
+                    <div>
+                        <div class="text-blue-400 text-sm font-bold">WEATHER SATS</div>
+                        <div class="text-xs text-gray-500">NOAA, GOES, MetOp</div>
+                    </div>
+                </div>
+                <input type="checkbox" checked id="cat-weather" class="w-4 h-4 accent-blue-500">
+            </label>
+
+            <!-- Debris -->
+            <label class="flex items-center justify-between cursor-pointer group hover:bg-red-900/10 p-2 rounded transition">
+                <div class="flex items-center gap-3">
+                    <span class="status-dot status-critical"></span>
+                    <div>
+                        <div class="text-red-400 text-sm font-bold">TRACKED DEBRIS</div>
+                        <div class="text-xs text-gray-500">Cosmos 2251 Fragments</div>
+                    </div>
+                </div>
+                <input type="checkbox" id="cat-debris" class="w-4 h-4 accent-red-500">
+            </label>
+        </div>
+
+        <!-- Telemetry Panel -->
+        <div class="border-t border-cyan-900/30 p-4">
+            <h3 class="orbitron text-cyan-400 text-sm tracking-wider mb-3">
+                <i class="fas fa-chart-line mr-2"></i>TELEMETRY
+            </h3>
+            <div class="grid grid-cols-2 gap-2 text-xs tech-mono">
+                <div class="bg-black/40 p-2 rounded border border-cyan-900/30">
+                    <div class="text-gray-500">ORBITAL VELOCITY</div>
+                    <div class="text-cyan-400 text-lg" id="tel-velocity">--</div>
+                </div>
+                <div class="bg-black/40 p-2 rounded border border-cyan-900/30">
+                    <div class="text-gray-500">ALTITUDE</div>
+                    <div class="text-cyan-400 text-lg" id="tel-altitude">--</div>
+                </div>
+                <div class="bg-black/40 p-2 rounded border border-cyan-900/30">
+                    <div class="text-gray-500">PERIOD</div>
+                    <div class="text-cyan-400 text-lg" id="tel-period">--</div>
+                </div>
+                <div class="bg-black/40 p-2 rounded border border-cyan-900/30">
+                    <div class="text-gray-500">INCLINATION</div>
+                    <div class="text-cyan-400 text-lg" id="tel-inclination">--</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Selected Object Detail -->
+    <div id="object-detail" class="fixed right-4 top-24 z-40 w-72 glass-panel rounded-lg hidden">
+        <div class="p-4 border-b border-cyan-900/30 flex justify-between items-center">
+            <h3 class="orbitron text-cyan-400 text-sm tracking-wider">TARGET DATA</h3>
+            <button onclick="closeDetail()" class="text-gray-500 hover:text-cyan-400"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="p-4 space-y-3 text-xs tech-mono">
+            <div class="flex justify-between border-b border-gray-800 pb-2">
+                <span class="text-gray-500">DESIGNATOR</span>
+                <span id="detail-id" class="text-cyan-400 font-bold">--</span>
+            </div>
+            <div class="flex justify-between border-b border-gray-800 pb-2">
+                <span class="text-gray-500">NORAD ID</span>
+                <span id="detail-norad" class="text-white">--</span>
+            </div>
+            <div class="flex justify-between border-b border-gray-800 pb-2">
+                <span class="text-gray-500">LATITUDE</span>
+                <span id="detail-lat" class="text-green-400">--</span>
+            </div>
+            <div class="flex justify-between border-b border-gray-800 pb-2">
+                <span class="text-gray-500">LONGITUDE</span>
+                <span id="detail-lon" class="text-green-400">--</span>
+            </div>
+            <div class="flex justify-between border-b border-gray-800 pb-2">
+                <span class="text-gray-500">ALTITUDE</span>
+                <span id="detail-alt" class="text-yellow-400">--</span>
+            </div>
+            <div class="flex justify-between border-b border-gray-800 pb-2">
+                <span class="text-gray-500">VELOCITY</span>
+                <span id="detail-vel" class="text-cyan-400">--</span>
+            </div>
+            <div class="pt-2">
+                <div class="text-gray-500 mb-1">ORBITAL PARAMETERS</div>
+                <div class="bg-black/60 p-2 rounded space-y-1">
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">ECCENTRICITY</span>
+                        <span id="detail-ecc" class="text-cyan-600">--</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">INCLINATION</span>
+                        <span id="detail-inc" class="text-cyan-600">--</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">PERIOD</span>
+                        <span id="detail-period" class="text-cyan-600">--</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Map -->
+    <div id="map"></div>
+
+    <!-- Footer Status -->
+    <div class="fixed bottom-4 right-4 z-40 glass-panel px-4 py-2 rounded text-xs tech-mono space-y-1">
+        <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+            <span class="text-green-400">TLE PROPAGATION: ACTIVE</span>
+        </div>
+        <div class="text-gray-500">SGP4 ALGORITHM // 1Hz UPDATE</div>
+        <div class="text-cyan-600" id="data-source">SOURCE: CELESTRAK (NORAD)</div>
+    </div>
+
+    <script>
+        // ==================== CONFIGURATION ====================
+        const CONFIG = {
+            updateInterval: 1000,
+            trailLength: 50,
+            mapCenter: [20, 0],
+            mapZoom: 3,
+            tleSources: [
+                { name: 'stations', url: 'https://celestrak.org/NORAD/elements/stations.txt', category: 'stations' },
+                { name: 'starlink', url: 'https://celestrak.org/NORAD/elements/starlink.txt', category: 'starlink' },
+                { name: 'gps', url: 'https://celestrak.org/NORAD/elements/gps-ops.txt', category: 'gps' },
+                { name: 'weather', url: 'https://celestrak.org/NORAD/elements/weather.txt', category: 'weather' },
+                { name: 'debris', url: 'https://celestrak.org/NORAD/elements/1999-025.txt', category: 'debris' }
+            ]
+        };
+
+        // ==================== EMBEDDED FALLBACK TLEs ====================
+        // These ensure the system works even if CORS blocks fetching
+        const FALLBACK_TLES = `
+ISS (ZARYA)
+1 25544U 98067A   24102.50000000  .00020000  00000-0  28000-4 0  9999
+2 25544  51.6400  45.0000 0005000  30.0000 330.0000 15.50000000    20
+TIANGONG
+1 48274U 21035A   24102.50000000  .00010000  00000-0  15000-4 0  9999
+2 48274  41.4700  25.0000 0008000  45.0000 315.0000 15.60000000    15
+HST
+1 20580U 90037B   24102.50000000  .00001000  00000-0  10000-4 0  9999
+2 20580  28.4700  10.0000 0002000  50.0000 310.0000 15.09000000    30
+STARLINK-1007
+1 44713U 19074A   24102.50000000  .00010000  00000-0  20000-4 0  9999
+2 44713  53.0000  60.0000 0001000  40.0000 320.0000 15.06000000    50
+STARLINK-1008
+1 44714U 19074B   24102.50000000  .00010000  00000-0  20000-4 0  9999
+2 44714  53.0000  62.0000 0001000  42.0000 322.0000 15.06000000    51
+GPS BIIR-2
+1 26360U 00025A   24102.50000000  .00000050  00000-0  50000-4 0  9999
+2 26360  55.0000  120.0000 0080000  60.0000 300.0000 02.00000000    10
+NOAA 19
+1 33591U 09005A   24102.50000000  .00000050  00000-0  50000-4 0  9999
+2 33591  99.0000  80.0000 0014000  60.0000 300.0000 14.12000000    40
+DEBRIS-001
+1 38779U 90037B   24102.50000000  .00001000  00000-0  10000-4 0  9999
+2 38779  74.0000  120.0000 0020000  80.0000 280.0000 14.50000000    25
+        `;
+
+        // ==================== STATE ====================
+        const state = {
+            satellites: [],
+            markers: {},
+            polylines: {},
+            categories: {
+                stations: true,
+                starlink: true,
+                gps: true,
+                weather: true,
+                debris: false
+            },
+            selectedObject: null,
+            tleLoaded: false
+        };
+
+        // ==================== MAP SETUP ====================
+        const map = L.map('map', {
+            zoomControl: false,
+            attributionControl: false,
+            minZoom: 2,
+            maxZoom: 10,
+            worldCopyJump: true
+        }).setView(CONFIG.mapCenter, CONFIG.mapZoom);
+
+        // Deep space dark tiles
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap contributors © CARTO',
+            subdomains: 'abcd',
+            maxZoom: 19,
+            opacity: 0.7
+        }).addTo(map);
+
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+        // Add coordinate grid
+        L.gridLayer = L.GridLayer.extend({
+            createTile: function (coords) {
+                const tile = document.createElement('div');
+                tile.style.outline = '1px solid rgba(0, 240, 255, 0.05)';
+                return tile;
+            }
+        });
+
+        // ==================== TLE PARSER ====================
+        function parseTLE(tleText) {
+            const lines = tleText.trim().split('\n');
+            const satellites = [];
+            let current = null;
+
+            for(let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if(!line) continue;
+
+                if(!line.startsWith('1 ') && !line.startsWith('2 ')) {
+                    current = { name: line };
+                } else if(line.startsWith('1 ') && current) {
+                    current.tle1 = line;
+                } else if(line.startsWith('2 ') && current && current.tle1) {
+                    current.tle2 = line;
+                    try {
+                        const satrec = satellite.twoline2satrec(current.tle1, current.tle2);
+                        if(satrec && satrec.error === 0) {
+                            satellites.push({
+                                name: current.name,
+orbit: satrec,
+                                id: current.name.replace(/\s+/g, '-').toUpperCase(),
+                                noradId: current.tle1.substring(2, 7),
+                                epoch: satrec.jdsatepoch,
+                                inclination: satrec.inclo * 180 / Math.PI,
+                                period: 1440 / ((satrec.no_kozai * 60) / (2 * Math.PI)), // minutes
+                                eccentricity: satrec.ecco,
+                                category: categorizeSatellite(current.name)
+                            });
+                        }
+                    } catch(e) {
+                        console.warn('Failed to parse TLE for:', current.name);
+                    }
+                    current = null;
+                }
+            }
+            return satellites;
+        }
+
+        function categorizeSatellite(name) {
+            const n = name.toUpperCase();
+            if(n.includes('ISS') || n.includes('TIANGONG') || n.includes('Tiangong')) return 'stations';
+            if(n.includes('STARLINK')) return 'starlink';
+            if(n.includes('GPS') || n.includes('NAVSTAR') || n.includes('GALILEO') || n.includes('GLONASS')) return 'gps';
+            if(n.includes('NOAA') || n.includes('GOES') || n.includes('METOP') || n.includes('TERRA') || n.includes('AQUA')) return 'weather';
+            if(n.includes('DEBRIS') || n.includes('COSMOS') || n.includes('IRIDIUM') || n.includes('FRAGMENT')) return 'debris';
+            return 'other';
+        }
+
+        // ==================== DATA FETCHING ====================
+        async function fetchTLEs() {
+            const allSats = [];
+            document.getElementById('data-loader').style.display = 'block';
+
+            // Try to fetch live data first
+            for(const source of CONFIG.tleSources) {
+                try {
+                    const response = await fetch(source.url, { 
+                        method: 'GET',
+                        mode: 'cors',
+                        cache: 'no-cache'
+                    });
+                    if(response.ok) {
+                        const text = await response.text();
+                        const sats = parseTLE(text);
+                        sats.forEach(s => s.category = source.category);
+                        allSats.push(...sats.slice(0, 20)); // Limit per category
+                        console.log(`Loaded ${sats.length} from ${source.name}`);
+                    }
+                } catch(e) {
+                    console.warn(`Failed to fetch ${source.name}:`, e);
+                }
+            }
+
+            // If no data fetched, use fallback
+            if(allSats.length === 0) {
+                console.log('Using fallback TLE data');
+                const fallbackSats = parseTLE(FALLBACK_TLES);
+                allSats.push(...fallbackSats);
+                document.getElementById('data-source').textContent = 'SOURCE: EMBEDDED TLE (OFFLINE)';
+                document.getElementById('data-source').style.color = '#ffaa00';
+            } else {
+                document.getElementById('data-source').textContent = `SOURCE: CELESTRAK LIVE (${allSats.length} OBJECTS)`;
+                document.getElementById('tle-epoch').textContent = new Date().toISOString().split('T')[0];
+            }
+
+            state.satellites = allSats;
+            state.tleLoaded = true;
+            document.getElementById('object-count').textContent = allSats.length;
+            document.getElementById('data-loader').style.display = 'none';
+
+            return allSats;
+        }
+
+        // ==================== RENDERING ====================
+        function getCategoryColor(cat) {
+            switch(cat) {
+                case 'stations': return '#00f0ff';
+                case 'starlink': return '#00ccff';
+                case 'gps': return '#00ff41';
+                case 'weather': return '#4488ff';
+                case 'debris': return '#ff0040';
+                default: return '#ffffff';
+            }
+        }
+
+        function getCategoryIcon(cat) {
+            switch(cat) {
+                case 'stations': return 'fa-space-shuttle';
+                case 'starlink': return 'fa-satellite';
+                case 'gps': return 'fa-location-arrow';
+                case 'weather': return 'fa-cloud';
+                case 'debris': return 'fa-exclamation-triangle';
+                default: return 'fa-dot-circle';
+            }
+        }
+
+        function createSatelliteIcon(category) {
+            const color = getCategoryColor(category);
+            return L.divIcon({
+                className: `marker-${category}`,
+                html: `
+                    <div class="relative w-4 h-4">
+                        <div class="absolute inset-0 rounded-full opacity-30" style="background: ${color}; animation: pulse-ring 2s infinite;"></div>
+                        <div class="absolute inset-1 rounded-full" style="background: ${color}; box-shadow: 0 0 10px ${color};"></div>
+                        <div class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-white opacity-80"></div>
+                    </div>
+                `,
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+        }
+
+        function propagateSatellite(sat) {
+            const now = new Date();
+            const positionAndVelocity = satellite.propagate(sat.orbit, now);
+
+            if(!positionAndVelocity.position) return null;
+
+            const gmst = satellite.gstime(now);
+            const position = satellite.eciToGeodetic(positionAndVelocity.position, gmst);
+            const velocity = Math.sqrt(
+                Math.pow(positionAndVelocity.velocity.x, 2) +
+                Math.pow(positionAndVelocity.velocity.y, 2) +
+                Math.pow(positionAndVelocity.velocity.z, 2)
+            ) * 3.6; // convert to km/h
+
+            return {
+                lat: satellite.degreesLat(position.latitude),
+                lon: satellite.degreesLong(position.longitude),
+                alt: position.height,
+                velocity: velocity,
+                timestamp: now
+            };
+        }
+
+        function updateSatellites() {
+            if(!state.tleLoaded) return;
+
+            const now = Date.now();
+
+            state.satellites.forEach(sat => {
+                // Check visibility
+                if(!state.categories[sat.category]) {
+                    if(state.markers[sat.id]) {
+                        map.removeLayer(state.markers[sat.id]);
+                        if(state.polylines[sat.id]) map.removeLayer(state.polylines[sat.id]);
+                        delete state.markers[sat.id];
+                        delete state.polylines[sat.id];
+                    }
+                    return;
+                }
+
+                const pos = propagateSatellite(sat);
+                if(!pos) return;
+
+                // Create or update marker
+                if(!state.markers[sat.id]) {
+                    const marker = L.marker([pos.lat, pos.lon], {
+                        icon: createSatelliteIcon(sat.category)
+                    }).addTo(map);
+
+                    marker.on('click', () => selectSatellite(sat, pos));
+
+                    // Add popup
+                    const popup = L.popup({
+                        className: 'glass-panel',
+                        closeButton: false
+                    }).setContent(`
+                        <div class="tech-mono text-xs">
+                            <div class="font-bold text-cyan-400 mb-1">${sat.name}</div>
+                            <div class="text-gray-400">NORAD: ${sat.noradId}</div>
+                            <div class="text-gray-400">ALT: ${pos.alt.toFixed(1)} km</div>
+                        </div>
+                    `);
+                    marker.bindPopup(popup);
+
+                    state.markers[sat.id] = marker;
+                    sat.trail = [];
+                } else {
+                    state.markers[sat.id].setLatLng([pos.lat, pos.lon]);
+                }
+
+                // Update trail
+                if(!sat.trail) sat.trail = [];
+                sat.trail.push([pos.lat, pos.lon]);
+                if(sat.trail.length > CONFIG.trailLength) sat.trail.shift();
+
+                if(!state.polylines[sat.id]) {
+                    const color = getCategoryColor(sat.category);
+                    const polyline = L.polyline(sat.trail, {
+                        color: color,
+                        weight: 1,
+                        opacity: 0.4,
+                        dashArray: '2, 6'
+                    }).addTo(map);
+                    state.polylines[sat.id] = polyline;
+                } else {
+                    state.polylines[sat.id].setLatLngs(sat.trail);
+                }
+
+                // Update selected object if this is it
+                if(state.selectedObject && state.selectedObject.id === sat.id) {
+                    updateDetailPanel(sat, pos);
+                }
+            });
+        }
+
+        // ==================== UI INTERACTION ====================
+        function selectSatellite(sat, pos) {
+            state.selectedObject = sat;
+            const panel = document.getElementById('object-detail');
+            panel.classList.remove('hidden');
+            updateDetailPanel(sat, pos);
+
+            // Update telemetry summary
+            document.getElementById('tel-velocity').textContent = pos.velocity.toFixed(0) + ' km/h';
+            document.getElementById('tel-altitude').textContent = pos.alt.toFixed(1) + ' km';
+            document.getElementById('tel-period').textContent = sat.period.toFixed(0) + ' min';
+            document.getElementById('tel-inclination').textContent = sat.inclination.toFixed(1) + '°';
+        }
+
+        function updateDetailPanel(sat, pos) {
+            document.getElementById('detail-id').textContent = sat.name;
+            document.getElementById('detail-norad').textContent = sat.noradId;
+            document.getElementById('detail-lat').textContent = pos.lat.toFixed(4) + '°';
+            document.getElementById('detail-lon').textContent = pos.lon.toFixed(4) + '°';
+            document.getElementById('detail-alt').textContent = pos.alt.toFixed(2) + ' km';
+            document.getElementById('detail-vel').textContent = pos.velocity.toFixed(0) + ' km/h';
+            document.getElementById('detail-ecc').textContent = sat.eccentricity.toExponential(3);
+            document.getElementById('detail-inc').textContent = sat.inclination.toFixed(2) + '°';
+            document.getElementById('detail-period').textContent = sat.period.toFixed(1) + ' min';
+        }
+
+        function closeDetail() {
+            document.getElementById('object-detail').classList.add('hidden');
+            state.selectedObject = null;
+        }
+
+        // Clock
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('clock').textContent = now.toISOString().replace('T', ' ').substring(0, 19) + 'Z';
+        }, 1000);
+
+        // Category toggles
+        document.getElementById('cat-stations').addEventListener('change', (e) => {
+            state.categories.stations = e.target.checked;
+            updateSatellites();
+        });
+        document.getElementById('cat-starlink').addEventListener('change', (e) => {
+            state.categories.starlink = e.target.checked;
+            updateSatellites();
+        });
+        document.getElementById('cat-gps').addEventListener('change', (e) => {
+            state.categories.gps = e.target.checked;
+            updateSatellites();
+        });
+        document.getElementById('cat-weather').addEventListener('change', (e) => {
+            state.categories.weather = e.target.checked;
+            updateSatellites();
+        });
+        document.getElementById('cat-debris').addEventListener('change', (e) => {
+            state.categories.debris = e.target.checked;
+            updateSatellites();
+        });
+
+        // ==================== INITIALIZATION ====================
+        async function init() {
+            console.log('Initializing Orbital Command...');
+            await fetchTLEs();
+
+            // Start propagation loop
+            setInterval(updateSatellites, CONFIG.updateInterval);
+            updateSatellites();
+
+            console.log('System operational. Tracking:', state.satellites.length, 'objects');
+        }
+
+        init();
+    </script>
+</body>
+</html>
